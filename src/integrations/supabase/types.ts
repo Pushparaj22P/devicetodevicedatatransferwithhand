@@ -14,7 +14,54 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      gesture_sessions: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          data_content: string
+          data_title: string | null
+          data_type: string
+          encrypted_content: string | null
+          encryption_key: string | null
+          expires_at: string
+          gesture_hash: string
+          id: string
+          matched_at: string | null
+          sender_id: string
+          status: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          data_content: string
+          data_title?: string | null
+          data_type: string
+          encrypted_content?: string | null
+          encryption_key?: string | null
+          expires_at?: string
+          gesture_hash: string
+          id?: string
+          matched_at?: string | null
+          sender_id: string
+          status?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          data_content?: string
+          data_title?: string | null
+          data_type?: string
+          encrypted_content?: string | null
+          encryption_key?: string | null
+          expires_at?: string
+          gesture_hash?: string
+          id?: string
+          matched_at?: string | null
+          sender_id?: string
+          status?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

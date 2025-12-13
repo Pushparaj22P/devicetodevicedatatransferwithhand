@@ -1,9 +1,21 @@
-import { useState, useCallback } from 'react';
-import { ArrowLeft, Send, Download, CheckCircle, Loader2 } from 'lucide-react';
+import { useState, useCallback, useEffect } from 'react';
+import { ArrowLeft, Send, Download, CheckCircle, Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useToast } from '@/hooks/use-toast';
 import GestureCanvas from './GestureCanvas';
 import DataTransferCard, { TransferData } from './DataTransferCard';
 import GestureDisplay from './GestureDisplay';
+import GestureTemplateSelector from './GestureTemplateSelector';
+import SessionTimer from './SessionTimer';
+import { GestureTemplate } from '@/lib/gestureTemplates';
+import { 
+  createGestureSession, 
+  findMatchingSession, 
+  completeSession,
+  subscribeToSessionUpdates,
+  decryptSessionData,
+  GestureSession
+} from '@/lib/sessionManager';
 
 interface Point {
   x: number;
@@ -15,9 +27,10 @@ interface TransferFlowProps {
   onBack: () => void;
 }
 
-type FlowState = 'select-mode' | 'prepare-data' | 'capture-gesture' | 'waiting' | 'success' | 'receive-gesture' | 'received';
+type FlowState = 'select-mode' | 'prepare-data' | 'capture-gesture' | 'waiting' | 'success' | 'receive-gesture' | 'received' | 'expired';
 
 const TransferFlow = ({ onBack }: TransferFlowProps) => {
+  const { toast } = useToast();
   const [mode, setMode] = useState<'send' | 'receive' | null>(null);
   const [flowState, setFlowState] = useState<FlowState>('select-mode');
   const [isRecording, setIsRecording] = useState(false);
@@ -25,6 +38,8 @@ const TransferFlow = ({ onBack }: TransferFlowProps) => {
   const [gesturePoints, setGesturePoints] = useState<Point[]>([]);
   const [dataToSend, setDataToSend] = useState<TransferData | null>(null);
   const [receivedData, setReceivedData] = useState<TransferData | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState<GestureTemplate | null>(null);
+  const [currentSession, setCurrentSession] = useState<GestureSession | null>(null);
 
   const handleModeSelect = (selectedMode: 'send' | 'receive') => {
     setMode(selectedMode);
@@ -40,29 +55,89 @@ const TransferFlow = ({ onBack }: TransferFlowProps) => {
     setFlowState('capture-gesture');
   };
 
-  const handleGestureComplete = useCallback((hash: string, points: Point[]) => {
+  const handleGestureComplete = useCallback(async (hash: string, points: Point[]) => {
     setGestureHash(hash);
     setGesturePoints(points);
     
-    if (mode === 'send') {
+    if (mode === 'send' && dataToSend) {
       setFlowState('waiting');
-      // Simulate waiting for receiver (in real app, this would be Firebase)
-      setTimeout(() => {
-        setFlowState('success');
-      }, 3000);
-    } else {
-      // Simulate receiving data
-      setFlowState('waiting');
-      setTimeout(() => {
-        setReceivedData({
-          type: 'text',
-          title: 'Shared Note',
-          content: 'This is a sample transferred message from another device!',
+      
+      // Create session in database
+      const result = await createGestureSession(points, dataToSend);
+      
+      if (result) {
+        setCurrentSession(result.session);
+        
+        toast({
+          title: "Session Created",
+          description: "Waiting for receiver to draw the same gesture...",
         });
+
+        // Subscribe to session updates
+        const unsubscribe = subscribeToSessionUpdates(result.session.id, (updatedSession) => {
+          if (updatedSession.status === 'matched' || updatedSession.status === 'completed') {
+            setFlowState('success');
+            toast({
+              title: "Transfer Complete!",
+              description: "Your data has been securely delivered.",
+            });
+            unsubscribe();
+          }
+        });
+      } else {
+        toast({
+          title: "Error",
+          description: "Failed to create session. Please try again.",
+          variant: "destructive",
+        });
+        setFlowState('capture-gesture');
+      }
+    } else if (mode === 'receive') {
+      setFlowState('waiting');
+      
+      // Try to find matching session
+      const matchedSession = await findMatchingSession(points);
+      
+      if (matchedSession) {
+        setCurrentSession(matchedSession);
+        
+        // Decrypt and display data
+        const decryptedContent = await decryptSessionData(matchedSession);
+        
+        setReceivedData({
+          type: matchedSession.data_type as TransferData['type'],
+          title: matchedSession.data_title || undefined,
+          content: decryptedContent || matchedSession.data_content,
+        });
+        
+        // Mark session as completed
+        await completeSession(matchedSession.id);
+        
         setFlowState('received');
-      }, 2000);
+        
+        toast({
+          title: "Data Received!",
+          description: "Gesture matched successfully.",
+        });
+      } else {
+        toast({
+          title: "No Match Found",
+          description: "No active session with matching gesture. Try again.",
+          variant: "destructive",
+        });
+        setFlowState('receive-gesture');
+      }
     }
-  }, [mode]);
+  }, [mode, dataToSend, toast]);
+
+  const handleSessionExpired = useCallback(() => {
+    setFlowState('expired');
+    toast({
+      title: "Session Expired",
+      description: "The transfer session has timed out for security.",
+      variant: "destructive",
+    });
+  }, [toast]);
 
   const resetFlow = () => {
     setMode(null);
@@ -72,11 +147,12 @@ const TransferFlow = ({ onBack }: TransferFlowProps) => {
     setDataToSend(null);
     setReceivedData(null);
     setIsRecording(false);
+    setSelectedTemplate(null);
+    setCurrentSession(null);
   };
 
   return (
     <div className="min-h-screen bg-background relative">
-      {/* Header */}
       <header className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-xl border-b border-glass-border">
         <div className="container mx-auto px-6 py-4 flex items-center justify-between">
           <button onClick={onBack} className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
@@ -91,7 +167,6 @@ const TransferFlow = ({ onBack }: TransferFlowProps) => {
         </div>
       </header>
 
-      {/* Content */}
       <main className="pt-24 pb-12 px-6">
         <div className="container mx-auto max-w-4xl">
           
@@ -150,16 +225,25 @@ const TransferFlow = ({ onBack }: TransferFlowProps) => {
               <h2 className="font-display text-2xl md:text-3xl font-bold mb-2 text-foreground text-center">
                 Draw Your Gesture
               </h2>
-              <p className="text-muted-foreground mb-8 text-center">
+              <p className="text-muted-foreground mb-6 text-center">
                 {mode === 'send' 
                   ? 'Draw a unique gesture that the receiver will replicate'
                   : 'Replicate the sender\'s gesture to receive data'}
               </p>
+
+              {/* Template Selector */}
+              <div className="w-full max-w-2xl mb-6">
+                <GestureTemplateSelector
+                  selectedTemplate={selectedTemplate}
+                  onSelect={setSelectedTemplate}
+                />
+              </div>
               
               <GestureCanvas
                 onGestureComplete={handleGestureComplete}
                 isRecording={isRecording}
                 onRecordingChange={setIsRecording}
+                selectedTemplate={selectedTemplate}
               />
               
               <div className="mt-8 flex gap-4">
@@ -204,6 +288,16 @@ const TransferFlow = ({ onBack }: TransferFlowProps) => {
                   <GestureDisplay points={gesturePoints} size={150} />
                 </div>
               )}
+
+              {/* Session Timer */}
+              {currentSession && (
+                <div className="w-full max-w-sm mb-6">
+                  <SessionTimer 
+                    expiresAt={currentSession.expires_at}
+                    onExpired={handleSessionExpired}
+                  />
+                </div>
+              )}
               
               <div className="glass-card p-4 max-w-sm">
                 <p className="text-xs text-muted-foreground mb-1">Session Key</p>
@@ -240,6 +334,27 @@ const TransferFlow = ({ onBack }: TransferFlowProps) => {
             </div>
           )}
 
+          {/* Expired State */}
+          {flowState === 'expired' && (
+            <div className="flex flex-col items-center text-center animate-fade-in">
+              <div className="w-24 h-24 rounded-full bg-destructive/10 flex items-center justify-center mb-8">
+                <RefreshCw className="w-12 h-12 text-destructive" />
+              </div>
+              
+              <h2 className="font-display text-2xl md:text-3xl font-bold mb-4 text-foreground">
+                Session Expired
+              </h2>
+              
+              <p className="text-muted-foreground mb-8">
+                The session timed out for security. Please start a new transfer.
+              </p>
+              
+              <Button variant="hero" size="lg" onClick={resetFlow}>
+                Start New Transfer
+              </Button>
+            </div>
+          )}
+
           {/* Received State */}
           {flowState === 'received' && (
             <div className="flex flex-col items-center animate-fade-in">
@@ -252,7 +367,7 @@ const TransferFlow = ({ onBack }: TransferFlowProps) => {
               </h2>
               
               <p className="text-muted-foreground mb-8 text-center">
-                Gesture matched successfully
+                Gesture matched successfully • AES-256 encrypted
               </p>
               
               <DataTransferCard mode="receive" receivedData={receivedData} />
