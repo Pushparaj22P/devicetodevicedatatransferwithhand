@@ -145,7 +145,8 @@ export function matchGestureToTemplate(
 
   const avgDistance = totalDistance / sampleSize;
   // Convert to similarity score (0-1, where 1 is perfect match)
-  const similarity = Math.max(0, 1 - avgDistance * 2);
+  // More lenient formula for partial matching
+  const similarity = Math.max(0, 1 - avgDistance * 1.2);
   
   return similarity;
 }
@@ -213,5 +214,5 @@ export function findBestTemplateMatch(
     }
   }
 
-  return bestMatch && bestMatch.similarity > 0.5 ? bestMatch : null;
+  return bestMatch && bestMatch.similarity > 0.3 ? bestMatch : null;
 }
