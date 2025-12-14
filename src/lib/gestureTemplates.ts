@@ -114,7 +114,7 @@ export function matchGestureToTemplate(
   userPoints: { x: number; y: number }[],
   template: GestureTemplate
 ): number {
-  if (userPoints.length < 5) return 0;
+  if (userPoints.length < 3) return 0;
 
   // Normalize user points
   const minX = Math.min(...userPoints.map((p) => p.x));
@@ -145,8 +145,8 @@ export function matchGestureToTemplate(
 
   const avgDistance = totalDistance / sampleSize;
   // Convert to similarity score (0-1, where 1 is perfect match)
-  // More lenient formula for partial matching
-  const similarity = Math.max(0, 1 - avgDistance * 1.2);
+  // Very lenient formula for partial matching - even rough shapes match
+  const similarity = Math.max(0, 1 - avgDistance * 0.8);
   
   return similarity;
 }
@@ -214,5 +214,5 @@ export function findBestTemplateMatch(
     }
   }
 
-  return bestMatch && bestMatch.similarity > 0.3 ? bestMatch : null;
+  return bestMatch && bestMatch.similarity > 0.2 ? bestMatch : null;
 }
