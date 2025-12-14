@@ -1,9 +1,13 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { Hands, Results } from '@mediapipe/hands';
-import { Camera } from '@mediapipe/camera_utils';
 import GestureGuideOverlay from './GestureGuideOverlay';
 import { GestureTemplate, findBestTemplateMatch } from '@/lib/gestureTemplates';
 
+declare global {
+  interface Window {
+    Hands: any;
+    Camera: any;
+  }
+}
 interface Point {
   x: number;
   y: number;
@@ -123,7 +127,7 @@ const GestureCanvas = ({
     }
   }, [onTemplateMatch]);
 
-  const onResults = useCallback((results: Results) => {
+  const onResults = useCallback((results: any) => {
     const canvas = canvasRef.current;
     const video = videoRef.current;
     if (!canvas || !video) return;
@@ -224,34 +228,73 @@ const GestureCanvas = ({
     trailCanvas.width = 640;
     trailCanvas.height = 480;
 
-    const hands = new Hands({
-      locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-      },
-    });
+    // Load MediaPipe scripts dynamically
+    const loadScript = (src: string): Promise<void> => {
+      return new Promise((resolve, reject) => {
+        if (document.querySelector(`script[src="${src}"]`)) {
+          resolve();
+          return;
+        }
+        const script = document.createElement('script');
+        script.src = src;
+        script.onload = () => resolve();
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
+    };
 
-    hands.setOptions({
-      maxNumHands: 1,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7,
-    });
+    let hands: any = null;
+    let camera: any = null;
 
-    hands.onResults(onResults);
+    const initMediaPipe = async () => {
+      try {
+        await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js');
+        await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js');
 
-    const camera = new Camera(video, {
-      onFrame: async () => {
-        await hands.send({ image: video });
-      },
-      width: 640,
-      height: 480,
-    });
+        const HandsClass = (window as any).Hands;
+        const CameraClass = (window as any).Camera;
 
-    camera.start();
+        if (!HandsClass || !CameraClass) {
+          console.error('MediaPipe not loaded');
+          return;
+        }
+
+        hands = new HandsClass({
+          locateFile: (file: string) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+          },
+        });
+
+        hands.setOptions({
+          maxNumHands: 1,
+          modelComplexity: 1,
+          minDetectionConfidence: 0.7,
+          minTrackingConfidence: 0.7,
+        });
+
+        hands.onResults(onResults);
+
+        camera = new CameraClass(video, {
+          onFrame: async () => {
+            if (hands) {
+              await hands.send({ image: video });
+            }
+          },
+          width: 640,
+          height: 480,
+        });
+
+        camera.start();
+      } catch (error) {
+        console.error('Failed to initialize MediaPipe:', error);
+      }
+    };
+
+    initMediaPipe();
 
     return () => {
-      camera.stop();
-      hands.close();
+      if (camera) camera.stop();
+      if (hands) hands.close();
       if (recordingTimeout.current) {
         clearTimeout(recordingTimeout.current);
       }
